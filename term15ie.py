@@ -28,29 +28,22 @@ class Mode(Enum):
 
 
 # The values are 15IE character codes.
-CODE_RUS = 0x0E
-CODE_LAT = 0x0F
+CODE_RUS = '0x0E'
+#CODE_RUS = 'R'  # Uncomment for testing.
+CODE_LAT = '0x0F'
+#CODE_LAT = 'L'  # Uncomment for testing.
 
-# Current mode of the terminal guessed by the program.
+# Current mode of the terminal guessed by the program. It must be global because both input decoding and printing needs
+# to access the same current value.
 mode: Mode = Mode.LAT
 
 
-def print_hex_dump(s: str):
+def print_to_term_with_hex_dump(s: str):
     global mode
     for c in s:
-        print(f"#{ord(c)} ", end="")
-        rus: int = rus_to_koi7(c)
-        if rus != 0:  # Cyrillic letter - print it, temporarily switching to RUS if needed.
-            if mode == Mode.LAT:
-                print(chr(CODE_RUS), end="")
-                print("'" + chr(rus) + "', ", end="")
-                print(chr(CODE_LAT), end="")
-            else:
-                print(chr(rus), end="")
-        elif 0 <= ord(c) <= 32 or ord(c) >= 127:
-            print(",", end="")  # Non-printable - do not print the character.
-        else:
-            print("'" + c + "', ", end="")  # Printable non-Cyrillic character.
+        print_to_term(f"0x{ord(c):02x}")
+        if ord(c) >= 32 and ord(c) != 127:  # Not an ASCII control code.
+            print_to_term(" '" + c + "', ")
     print()
 
 
@@ -61,11 +54,11 @@ def main():
     
 Connect with the terminal and run this program. Enter a line of text,
 using RUS and LAT keys along the way, and press VK (aka Enter). The
-program will print the Unicode code points of the decoded line along
-with the characters if they are printable. Cyrillic letters are
-printed via issuing the RUS/LAT codes.
+program will print the line back, and then the Unicode code points of
+the decoded line along with the characters if they are printable.
+Cyrillic letters are printed via issuing the RUS/LAT codes.
 
-All input characters with codes >= 128 are replaced with underscores.
+All input characters with codes >= 128 are replaced with question marks.
 
 Enter an empty line to quit.
 ''')
@@ -74,26 +67,49 @@ Enter an empty line to quit.
         if not input_line:
             print("Exiting the program.")
             break
-        output_line: str = process_line(input_line)
-        print_hex_dump(output_line)
+        output_line: str = convert_from_term(input_line)
+        print_to_term_with_hex_dump(output_line)
 
 
-def process_line(input_line: str) -> str:
+def convert_from_term(term: str) -> str:
     global mode
-    output_line: str = ''
-    for c in input_line:
-        if ord(c) == CODE_RUS:
+    s: str = ''
+    for c in term:
+        if c == CODE_RUS:
             mode = Mode.RUS
-        elif ord(c) == CODE_LAT:
+        elif c == CODE_LAT:
             mode = Mode.LAT
-        elif ord(c) >= 0x80:
-            output_line += '_'
+        elif ord(c) >= 0x80:  # Should not happen because the terminal sends 7-bit codes only.
+            s += '?'
         elif mode == Mode.RUS and 0x40 <= ord(c) <= 0x7F:
-            output_line += koi7_to_rus(ord(c))
+            s += koi7_to_rus(ord(c))
         else:
-            output_line += c
-    return output_line
+            s += c
+    return s
 
+
+# Prints a Unicode string to the terminal. Non-ASCII non-Cyrillic characters are printed as '?', while ASCII control
+# codes are printed as-is. Does not append a newline.
+def print_to_term(s: str):
+    global mode
+    for c in s:
+        if ord(c) <= 0x40:
+            print(c, end="")
+            continue
+        rus: int = rus_to_koi7(c)
+        if rus != 0:  # Cyrillic letter - print it, temporarily switching to RUS if needed.
+            if mode == Mode.LAT:
+                mode = Mode.RUS
+                print(CODE_RUS, end="")
+            print(chr(rus), end="")
+        else:
+            if ord(c) >= 128:  # Non-ASCII non-Cyrillic - substitute such characters.
+                print('?', end="")
+            else:  # ASCII character.
+                if mode == Mode.RUS:
+                    mode = Mode.LAT
+                    print(CODE_LAT, end="")
+                print(c, end="")
 
 if __name__ == '__main__':
     main()
